@@ -50,14 +50,81 @@ class CompoundFile:
         self.first_difat_sector = 0
         self.num_difat_sectors = 0
 
-        # Storage and Streams
-        self.streams = []
+        # File Allocation Table (FAT)
+        self.fat = []
+        self.mini_fat = []
+
+        # Sector
+        self.sector = b""
+        self.mini_sector = b""
+
+    def write_stream(self, data: bytes):
+        """
+        Write data stream to the sector.
+
+        """
+
+        # Get sector index for data
+        sector_index = len(self.fat)
+
+        # Add zero-padding for data
+        padding = bytes((512 - len(data) % 512) % 512)
+        tail = data + padding
+
+        # Separate tail into head/tail
+        head, tail = tail[:512], tail[512:]
+
+        # Write head to sector right before last head
+        while tail:
+            self.sector += head
+            self.fat.append(len(self.fat) + 1)
+
+            head, tail = tail[:512], tail[512:]
+
+        # Write last head to sector and end FAT chain
+        self.sector += head
+        self.fat.append(ENDOFCHAIN)
+
+        # Return first sector number of stream
+        return sector_index
+
+    def write_mini_stream(self, data: bytes):
+        """
+        Write mini data stream to the sector.
+
+        """
+
+        # Get sector index for data
+        sector_index = len(self.mini_fat)
+
+        # Add zero-padding for data
+        padding = bytes((64 - len(data) % 64) % 64)
+        tail = data + padding
+
+        # Separate tail into head/tail
+        head, tail = tail[:64], tail[64:]
+
+        # Write head to sector right before last head
+        while tail:
+            self.mini_sector += head
+            self.mini_fat.append(len(self.mini_fat) + 1)
+
+            head, tail = tail[:64], tail[64:]
+
+        # Write last head to sector and end FAT chain
+        self.mini_sector += head
+        self.mini_fat.append(ENDOFCHAIN)
+
+        # Return first sector number of stream
+        return sector_index
 
     def open(self, dest):
         """
         Open compound file and create CompoundFile instance.
 
         """
+
+        raise NotImplementedError
 
     def save(self, dest):
         """
@@ -134,16 +201,37 @@ class CompoundFile:
 
         """
 
-        raise NotImplementedError
+        cfb = CompoundFile()
 
+        if not dest:
+            dest = f"{src}.cfb"
 
-class Storage:
-    pass
+        for root, _, streams in os.walk(src):
+            storage = os.path.relpath(root, src).lstrip(".")
 
+            # Add storage as directory entry
+            if storage:
+                raise NotImplementedError
 
-class Stream:
-    pass
+            else:
+                pass
+
+            for stream in streams:
+                # Read data from file
+                with open(f"{root}/{stream}", "rb") as f:
+                    data = f.read()
+                    size = len(data)
+
+                # Write data as stream
+                if size > 4096:
+                    cfb.write_stream(data)
+
+                else:
+                    cfb.write_mini_stream(data)
+
+                # Add stream as directory entry
+                raise NotImplementedError
 
 
 if __name__ == "__main__":
-    CompoundFile.decompress("tests/test.hwp")
+    CompoundFile.compress("tests/test")
