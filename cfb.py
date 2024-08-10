@@ -23,12 +23,12 @@ MAXREGSID = 0xFFFFFFFA  #: (-6) maximum directory entry ID
 NOSTREAM = 0xFFFFFFFF  #: (-1) unallocated directory entry
 
 # Object type constants
-STGTY_EMPTY = 0x00  #: empty directory entry
-STGTY_STORAGE = 0x01  #: element is a storage object
-STGTY_STREAM = 0x02  #: element is a stream object
-STGTY_LOCKBYTES = 0x03  #: element is an ILockBytes object
-STGTY_PROPERTY = 0x04  #: element is an IPropertyStorage object
-STGTY_ROOT = 0x05  #: element is a root storage
+OBJTY_EMPTY = 0x00  #: empty directory entry
+OBJTY_STORAGE = 0x01  #: element is a storage object
+OBJTY_STREAM = 0x02  #: element is a stream object
+OBJTY_LOCKBYTES = 0x03  #: element is an ILockBytes object
+OBJTY_PROPERTY = 0x04  #: element is an IPropertyStorage object
+OBJTY_ROOT = 0x05  #: element is a root storage
 
 
 class CompoundFile:
@@ -36,7 +36,7 @@ class CompoundFile:
         def __init__(self) -> None:
             # Directory data
             self.name = "".encode("utf-16-le")
-            self.type = STGTY_EMPTY
+            self.type = OBJTY_EMPTY
             self.subdirs = []
             self.sector = 0x00000000
             self.size = 0
@@ -113,7 +113,7 @@ class CompoundFile:
         # Directories
         self.root_directory = CompoundFile.Directory()
         self.root_directory.name = "Root Entry".encode("utf-16-le")
-        self.root_directory.type = STGTY_ROOT
+        self.root_directory.type = OBJTY_ROOT
 
     def write_sector(self, data: bytes):
         """
@@ -294,7 +294,7 @@ class CompoundFile:
                 # Initialize directory entry for storage
                 storage_dir = CompoundFile.Directory()
                 storage_dir.name = storage_name.encode("utf-16-le")
-                storage_dir.type = STGTY_STORAGE
+                storage_dir.type = OBJTY_STORAGE
 
                 # Add storage as subdir of parent storage
                 parent_dir = cfb.root_directory.find("/".join(path))
@@ -320,7 +320,7 @@ class CompoundFile:
                 # Initialize directory entry for stream
                 stream_dir = CompoundFile.Directory()
                 stream_dir.name = stream.encode("utf-16-le")
-                stream_dir.type = STGTY_STREAM
+                stream_dir.type = OBJTY_STREAM
                 stream_dir.size = stream_size
                 stream_dir.sector = stream_sector_index
 
