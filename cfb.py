@@ -53,12 +53,13 @@ class CompoundFile:
         # File Allocation Table (FAT)
         self.fat = []
         self.mini_fat = []
+        self.difat = []
 
-        # Sector
+        # Sector data
         self.sector = b""
         self.mini_sector = b""
 
-    def write_stream(self, data: bytes):
+    def write_sector(self, data: bytes):
         """
         Write data stream to the sector.
 
@@ -67,28 +68,24 @@ class CompoundFile:
         # Get sector index for data
         sector_index = len(self.fat)
 
-        # Add zero-padding for data
-        padding = bytes((512 - len(data) % 512) % 512)
-        tail = data + padding
-
-        # Separate tail into head/tail
-        head, tail = tail[:512], tail[512:]
+        # Separate data into head/tail
+        head, tail = data[: self.sector_shift], data[self.sector_shift :]
 
         # Write head to sector right before last head
         while tail:
             self.sector += head
             self.fat.append(len(self.fat) + 1)
 
-            head, tail = tail[:512], tail[512:]
+            head, tail = tail[: self.sector_shift], tail[self.sector_shift :]
 
         # Write last head to sector and end FAT chain
-        self.sector += head
+        self.sector += struct.pack("<self.sector_shifts", head)
         self.fat.append(ENDOFCHAIN)
 
         # Return first sector number of stream
         return sector_index
 
-    def write_mini_stream(self, data: bytes):
+    def write_mini_sector(self, data: bytes):
         """
         Write mini data stream to the sector.
 
@@ -97,12 +94,8 @@ class CompoundFile:
         # Get sector index for data
         sector_index = len(self.mini_fat)
 
-        # Add zero-padding for data
-        padding = bytes((64 - len(data) % 64) % 64)
-        tail = data + padding
-
-        # Separate tail into head/tail
-        head, tail = tail[:64], tail[64:]
+        # Separate data into head/tail
+        head, tail = data[:64], data[64:]
 
         # Write head to sector right before last head
         while tail:
@@ -111,14 +104,30 @@ class CompoundFile:
 
             head, tail = tail[:64], tail[64:]
 
-        # Write last head to sector and end FAT chain
-        self.mini_sector += head
+        # Write last head to sector and end MINIFAT chain
+        self.mini_sector += struct.pack("<64s", head)
         self.mini_fat.append(ENDOFCHAIN)
 
         # Return first sector number of stream
         return sector_index
 
-    def open(self, dest):
+    def write_fat(self, data: bytes):
+        """
+        Write fat to the sector and write difat array.
+
+        """
+
+        # Separate data into head/tail
+        head, tail = data[: self.sector_shift], data[self.sector_shift :]
+
+        # Write head to sector until there is no head left
+        while head:
+            self.difat.append(len(self.sector) // self.sector_shift)
+            self.sector += struct.pack("<self.sector_shifts", head)
+
+            head, tail = tail[: self.sector_shift], tail[self.sector_shift :]
+
+    def open(self, src):
         """
         Open compound file and create CompoundFile instance.
 
@@ -133,10 +142,10 @@ class CompoundFile:
         """
 
         # Open file path to save data
-        f = open(dest, "wb")
+        fp = open(dest, "wb")
 
         # Write header sector
-        data = struct.pack_into(
+        header_data = struct.pack_into(
             "<8s16xHHHHH6xIIIIIIIII",
             self.header_signature,
             self.minor_version,
@@ -154,11 +163,16 @@ class CompoundFile:
             self.first_difat_sector,
             self.num_difat_sectors,
         )
-        f.write(data)
+        fp.write(header_data)
 
-        for difat in self.difat:
-            data = struct.pack("<I", difat)
-            f.write(data)
+        # Write difat
+        fp.write(b"".join([struct.pack("<I", entry) for entry in self.difat]))
+
+        # Write sectors
+        fp.write(self.sector)
+
+        # Save file
+        fp.close()
 
     @staticmethod
     def decompress(src, dest=None):
@@ -207,30 +221,61 @@ class CompoundFile:
             dest = f"{src}.cfb"
 
         for root, _, streams in os.walk(src):
-            storage = os.path.relpath(root, src).lstrip(".")
+            storage_name = os.path.relpath(root, src).lstrip(".")
 
             # Add storage as directory entry
-            if storage:
+            if storage_name:
                 raise NotImplementedError
 
             else:
-                pass
+                raise NotImplementedError
 
             for stream in streams:
                 # Read data from file
                 with open(f"{root}/{stream}", "rb") as f:
-                    data = f.read()
-                    size = len(data)
+                    stream_data = f.read()
+                    stream_size = len(stream_data)
 
-                # Write data as stream
-                if size > 4096:
-                    cfb.write_stream(data)
+                # Write data into sector or mini-sector
+                if stream_size > MINI_STREAM_CUTOFF_SIZE:
+                    stream_sector_index = cfb.write_sector(stream_data)
 
                 else:
-                    cfb.write_mini_stream(data)
+                    stream_sector_index = cfb.write_mini_sector(stream_data)
 
                 # Add stream as directory entry
                 raise NotImplementedError
+
+        # Write mini-sector into sector
+        mini_sector_index = cfb.write_sector(cfb.mini_sector)
+
+        # Write mini-fat into sector
+        minifat_data = b"".join(
+            [struct.pack("<I", entry) for entry in cfb.mini_fat],
+        )
+        cfb.num_mini_fat_sectors = (
+            len(minifat_data) // cfb.sector_shift
+            + bool(len(minifat_data) % cfb.sector_shift),
+        )
+        cfb.first_mini_fat_sector = cfb.write_sector(minifat_data)
+
+        # Write directory entry into sector
+        directory_data = b""
+        cfb.num_dir_sectors = (
+            len(directory_data) // cfb.sector_shift
+            + bool(len(directory_data) % cfb.sector_shift),
+        )
+        cfb.first_dir_sector = cfb.write_sector(directory_data)
+
+        # Write fat into sector
+        fat_data = b"".join([struct.pack("<I", entry) for entry in cfb.fat])
+        cfb.write_fat(fat_data)
+        cfb.num_fat_sectors = (
+            len(fat_data) // cfb.sector_shift + bool(len(fat_data) % cfb.sector_shift),
+        )
+
+        # Export results as file
+        cfb.save(dest)
 
 
 if __name__ == "__main__":
