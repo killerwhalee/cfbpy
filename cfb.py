@@ -23,7 +23,7 @@ MAXREGSID = 0xFFFFFFFA  #: (-6) maximum directory entry ID
 NOSTREAM = 0xFFFFFFFF  #: (-1) unallocated directory entry
 
 # Object type constants
-STGTY_EMPTY = -0x00  #: empty directory entry
+STGTY_EMPTY = 0x00  #: empty directory entry
 STGTY_STORAGE = 0x01  #: element is a storage object
 STGTY_STREAM = 0x02  #: element is a stream object
 STGTY_LOCKBYTES = 0x03  #: element is an ILockBytes object
