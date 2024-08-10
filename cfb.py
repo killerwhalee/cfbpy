@@ -161,9 +161,11 @@ class CompoundFile:
         Save compound file from CompoundFile instance.
 
         """
-
-        # Open file path to save data
-        fp = open(dest, "wb")
+        # Update header data
+        self.num_fat_sectors = None
+        self.num_mini_fat_sectors = None
+        self.num_difat_sectors = None
+        self.num_dir_sectors = None
 
         # Write header sector
         header_data = struct.pack_into(
@@ -184,16 +186,17 @@ class CompoundFile:
             self.first_difat_sector,
             self.num_difat_sectors,
         )
-        fp.write(header_data)
 
-        # Write difat
-        fp.write(b"".join([struct.pack("<I", entry) for entry in self.difat]))
+        # Open file path to save data
+        with open(dest, "wb") as fp:
+            # Write header
+            fp.write(header_data)
 
-        # Write sectors
-        fp.write(self.sector)
+            # Write difat
+            fp.write(b"".join([struct.pack("<I", entry) for entry in self.difat]))
 
-        # Save file
-        fp.close()
+            # Write sectors
+            fp.write(b"".join(self.sectors))
 
     @staticmethod
     def decompress(src, dest=None):
