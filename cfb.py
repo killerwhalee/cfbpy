@@ -1,6 +1,7 @@
 from olefile import OleFileIO
 
 import os, struct
+import math
 
 # Header constants
 HEADER_SIGNATURE = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
@@ -274,26 +275,20 @@ class CompoundFile:
         minifat_data = b"".join(
             [struct.pack("<I", entry) for entry in cfb.mini_fat],
         )
-        cfb.num_mini_fat_sectors = (
-            len(minifat_data) // cfb.sector_shift
-            + bool(len(minifat_data) % cfb.sector_shift),
+        cfb.num_mini_fat_sectors = math.ceil(
+            len(mini_fat_data) / cfb.sector_shift,
         )
         cfb.first_mini_fat_sector = cfb.write_sector(minifat_data)
 
         # Write directory entry into sector
         directory_data = b""
-        cfb.num_dir_sectors = (
-            len(directory_data) // cfb.sector_shift
-            + bool(len(directory_data) % cfb.sector_shift),
-        )
+        cfb.num_dir_sectors = math.ceil(len(directory_data) / cfb.sector_shift)
         cfb.first_dir_sector = cfb.write_sector(directory_data)
 
         # Write fat into sector
         fat_data = b"".join([struct.pack("<I", entry) for entry in cfb.fat])
         cfb.write_fat(fat_data)
-        cfb.num_fat_sectors = (
-            len(fat_data) // cfb.sector_shift + bool(len(fat_data) % cfb.sector_shift),
-        )
+        cfb.num_fat_sectors = math.ceil(len(fat_data) / cfb.sector_shift)
 
         # Export results as file
         cfb.save(dest)
