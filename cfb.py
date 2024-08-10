@@ -31,6 +31,15 @@ STGTY_ROOT = 5  #: element is a root storage
 
 
 class CompoundFile:
+    class Directory:
+        def __init__(self) -> None:
+            # Directory data
+            self.name = b""
+            self.type = STGTY_EMPTY
+            self.subdirs = []
+            self.sector = FREESECT
+            self.size = 0
+
     def __init__(self) -> None:
         # Header data
         self.header_signature = HEADER_SIGNATURE
