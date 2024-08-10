@@ -22,12 +22,12 @@ MAXREGSID = 0xFFFFFFFA  #: (-6) maximum directory entry ID
 NOSTREAM = 0xFFFFFFFF  #: (-1) unallocated directory entry
 
 # Object type constants
-STGTY_EMPTY = 0  #: empty directory entry
-STGTY_STORAGE = 1  #: element is a storage object
-STGTY_STREAM = 2  #: element is a stream object
-STGTY_LOCKBYTES = 3  #: element is an ILockBytes object
-STGTY_PROPERTY = 4  #: element is an IPropertyStorage object
-STGTY_ROOT = 5  #: element is a root storage
+STGTY_EMPTY = -0x00  #: empty directory entry
+STGTY_STORAGE = 0x01  #: element is a storage object
+STGTY_STREAM = 0x02  #: element is a stream object
+STGTY_LOCKBYTES = 0x03  #: element is an ILockBytes object
+STGTY_PROPERTY = 0x04  #: element is an IPropertyStorage object
+STGTY_ROOT = 0x05  #: element is a root storage
 
 
 class CompoundFile:
@@ -41,6 +41,9 @@ class CompoundFile:
             self.size = 0
 
     def __init__(self) -> None:
+        # File metadata
+        self.file_name = ""
+
         # Header data
         self.header_signature = HEADER_SIGNATURE
         self.header_clsid = 0
