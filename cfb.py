@@ -124,18 +124,21 @@ class CompoundFile:
         # Get sector index for data
         sector_index = len(self.fat)
 
+        # Get sector size
+        sector_size = 1 << self.sector_shift
+
         # Separate data into head/tail
-        head, tail = data[: self.sector_shift], data[self.sector_shift :]
+        head, tail = data[:sector_size], data[sector_size:]
 
         # Write head to sector right before last head
         while tail:
             self.sectors.append(head)
             self.fat.append(len(self.sectors))
 
-            head, tail = tail[: self.sector_shift], tail[self.sector_shift :]
+            head, tail = tail[:sector_size], tail[sector_size:]
 
         # Write last head to sector and end FAT chain
-        self.sectors.append(struct.pack(f"<{self.sector_shift}s", head))
+        self.sectors.append(struct.pack(f"<{sector_size}s", head))
         self.fat.append(ENDOFCHAIN)
 
         # Return first sector number of stream
@@ -150,22 +153,22 @@ class CompoundFile:
         # Get sector index for data
         sector_index = len(self.mini_fat)
 
+        # Get mini sector size
+        mini_sector_size = 1 << self.mini_sector_shift
+
         # Separate data into head/tail
-        head, tail = data[: self.mini_sector_shift], data[self.mini_sector_shift :]
+        head, tail = data[:mini_sector_size], data[mini_sector_size:]
 
         # Write head to sector right before last head
         while tail:
             self.mini_sectors.append(head)
             self.mini_fat.append(len(self.mini_sectors))
 
-            head, tail = (
-                tail[: self.mini_sector_shift],
-                tail[self.mini_sector_shift :],
-            )
+            head, tail = tail[:mini_sector_size], tail[mini_sector_size:]
 
         # Write last head to sector and end MINIFAT chain
         self.mini_sectors.append(
-            struct.pack(f"<{self.mini_sector_shift}s", head),
+            struct.pack(f"<{mini_sector_size}s", head),
         )
         self.mini_fat.append(ENDOFCHAIN)
 
@@ -178,15 +181,18 @@ class CompoundFile:
 
         """
 
+        # Get sector size
+        sector_size = 1 << self.sector_shift
+
         # Separate data into head/tail
-        head, tail = data[: self.sector_shift], data[self.sector_shift :]
+        head, tail = data[:sector_size], data[sector_size:]
 
         # Write head to sector until there is no head left
         while head:
             self.difat.append(len(self.sectors))
-            self.sectors.append(struct.pack(f"<{self.sector_shifts}", head))
+            self.sectors.append(struct.pack(f"<{sector_size}s", head))
 
-            head, tail = tail[: self.sector_shift], tail[self.sector_shift :]
+            head, tail = tail[:sector_size], tail[sector_size:]
 
     def open(self, src):
         """
@@ -202,13 +208,13 @@ class CompoundFile:
 
         """
         # Update header data
-        self.num_fat_sectors = None
-        self.num_mini_fat_sectors = None
-        self.num_difat_sectors = None
-        self.num_dir_sectors = None
+        self.num_fat_sectors = 0
+        self.num_mini_fat_sectors = 0
+        self.num_difat_sectors = 0
+        self.num_dir_sectors = 0
 
         # Write header sector
-        header_data = struct.pack_into(
+        header_data = struct.pack(
             "<8s16xHHHHH6xIIIIIIIII",
             self.header_signature,
             self.minor_version,
@@ -233,7 +239,7 @@ class CompoundFile:
             fp.write(header_data)
 
             # Write difat
-            fp.write(b"".join([struct.pack("<I", entry) for entry in self.difat]))
+            fp.write(bytes(436))
 
             # Write sectors
             fp.write(b"".join(self.sectors))
@@ -297,7 +303,12 @@ class CompoundFile:
                 storage_dir.type = OBJTY_STORAGE
 
                 # Add storage as subdir of parent storage
-                parent_dir = cfb.root_directory.find("/".join(path))
+                if path:
+                    parent_dir = cfb.root_directory.find("/".join(path))
+
+                else:
+                    parent_dir = cfb.root_directory
+
                 parent_dir.subdirs.append(storage_dir)
 
             # Use root storage if storage name is empty
@@ -334,24 +345,27 @@ class CompoundFile:
         cfb.root_directory.size = len(mini_sector_data)
         cfb.root_directory.sector = mini_sector_index
 
+        # Get sector size
+        sector_size = 1 << cfb.sector_shift
+
         # Write mini-fat into sector
         mini_fat_data = b"".join(
             [struct.pack("<I", entry) for entry in cfb.mini_fat],
         )
         cfb.num_mini_fat_sectors = math.ceil(
-            len(mini_fat_data) / cfb.sector_shift,
+            len(mini_fat_data) / sector_size,
         )
         cfb.first_mini_fat_sector = cfb.write_sector(mini_fat_data)
 
         # Write directory entry into sector
-        directory_data = b""
-        cfb.num_dir_sectors = math.ceil(len(directory_data) / cfb.sector_shift)
+        directory_data = bytes(cfb.root_directory)
+        cfb.num_dir_sectors = math.ceil(len(directory_data) / sector_size)
         cfb.first_dir_sector = cfb.write_sector(directory_data)
 
         # Write fat into sector
         fat_data = b"".join([struct.pack("<I", entry) for entry in cfb.fat])
         cfb.write_fat(fat_data)
-        cfb.num_fat_sectors = math.ceil(len(fat_data) / cfb.sector_shift)
+        cfb.num_fat_sectors = math.ceil(len(fat_data) / sector_size)
 
         # Export results as file
         cfb.save(dest)
