@@ -135,7 +135,7 @@ class CompoundFile:
             head, tail = tail[: self.sector_shift], tail[self.sector_shift :]
 
         # Write last head to sector and end FAT chain
-        self.sectors.append(struct.pack(f"<{self.sector_shifts}", head))
+        self.sectors.append(struct.pack(f"<{self.sector_shift}s", head))
         self.fat.append(ENDOFCHAIN)
 
         # Return first sector number of stream
@@ -165,7 +165,7 @@ class CompoundFile:
 
         # Write last head to sector and end MINIFAT chain
         self.mini_sectors.append(
-            struct.pack(f"<{self.mini_sector_shifts}", head),
+            struct.pack(f"<{self.mini_sector_shift}s", head),
         )
         self.mini_fat.append(ENDOFCHAIN)
 
@@ -325,7 +325,7 @@ class CompoundFile:
                 stream_dir.sector = stream_sector_index
 
                 # Add stream as subdir of storage
-                storage_dir.subdirs.append(stream)
+                storage_dir.subdirs.append(stream_dir)
 
         # Write mini-sector into sector
         mini_sector_data = b"".join(cfb.mini_sectors)
