@@ -35,11 +35,49 @@ class CompoundFile:
     class Directory:
         def __init__(self) -> None:
             # Directory data
-            self.name = b""
+            self.name = "".encode("utf-16-le")
             self.type = STGTY_EMPTY
             self.subdirs = []
-            self.sector = FREESECT
+            self.sector = 0x00000000
             self.size = 0
+
+        def __bytes__(self) -> bytes:
+            directory_data = struct.pack(
+                "<64sHBBIII16sIQQIQ",
+                self.name,
+                len(self.name) + 1,
+                self.type,
+                0x01,
+                0xFFFFFFFF,
+                0xFFFFFFFF,
+                0xFFFFFFFF,
+                bytes(16),
+                0x00000000,
+                0x0000000000000000,
+                0x0000000000000000,
+                self.sector,
+                self.size,
+            )
+
+            return directory_data
+
+        def find(self, path):
+            head, *tail = path.split("/", 1)
+
+            target_dir = None
+
+            for subdir in self.subdirs:
+                if subdir.name == head:
+                    target_dir = subdir
+                    break
+
+            # Return target directory
+            # if no target was found or no tail is left
+            if not target_dir or not tail:
+                return target_dir
+
+            # Recursively find target directory
+            return target_dir.find(tail[0])
 
     def __init__(self) -> None:
         # File metadata
@@ -73,7 +111,9 @@ class CompoundFile:
         self.mini_sectors = []
 
         # Directories
-        self.directories = CompoundFile.Directory()
+        self.root_directory = CompoundFile.Directory()
+        self.root_directory.name = "Root Entry".encode("utf-16-le")
+        self.root_directory.type = STGTY_ROOT
 
     def write_sector(self, data: bytes):
         """
@@ -245,15 +285,24 @@ class CompoundFile:
             dest = f"{src}.cfb"
 
         for root, _, streams in os.walk(src):
-            storage_name = os.path.relpath(root, src).lstrip(".")
+            storage = os.path.relpath(root, src).lstrip(".")
 
             # Add storage as directory entry
-            if storage_name:
-                raise NotImplementedError
+            if storage:
+                *path, storage_name = storage.split("/")
 
-            # If storage name is blank, use root storage
+                # Initialize directory entry for storage
+                storage_dir = CompoundFile.Directory()
+                storage_dir.name = storage_name.encode("utf-16-le")
+                storage_dir.type = STGTY_STORAGE
+
+                # Add storage as subdir of parent storage
+                parent_dir = cfb.root_directory.find("/".join(path))
+                parent_dir.subdirs.append(storage_dir)
+
+            # Use root storage if storage name is empty
             else:
-                raise NotImplementedError
+                storage_dir = cfb.root_directory
 
             for stream in streams:
                 # Read data from file
@@ -268,20 +317,31 @@ class CompoundFile:
                 else:
                     stream_sector_index = cfb.write_mini_sector(stream_data)
 
-                # Add stream as directory entry
-                raise NotImplementedError
+                # Initialize directory entry for stream
+                stream_dir = CompoundFile.Directory()
+                stream_dir.name = stream.encode("utf-16-le")
+                stream_dir.type = STGTY_STREAM
+                stream_dir.size = stream_size
+                stream_dir.sector = stream_sector_index
+
+                # Add stream as subdir of storage
+                storage_dir.subdirs.append(stream)
 
         # Write mini-sector into sector
-        mini_sector_index = cfb.write_sector(cfb.mini_sectors)
+        mini_sector_data = b"".join(cfb.mini_sectors)
+        mini_sector_index = cfb.write_sector(mini_sector_data)
+
+        cfb.root_directory.size = len(mini_sector_data)
+        cfb.root_directory.sector = mini_sector_index
 
         # Write mini-fat into sector
-        minifat_data = b"".join(
+        mini_fat_data = b"".join(
             [struct.pack("<I", entry) for entry in cfb.mini_fat],
         )
         cfb.num_mini_fat_sectors = math.ceil(
             len(mini_fat_data) / cfb.sector_shift,
         )
-        cfb.first_mini_fat_sector = cfb.write_sector(minifat_data)
+        cfb.first_mini_fat_sector = cfb.write_sector(mini_fat_data)
 
         # Write directory entry into sector
         directory_data = b""
