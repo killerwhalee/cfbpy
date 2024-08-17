@@ -3,6 +3,8 @@ from olefile import OleFileIO
 import os, struct
 import math
 
+import directory
+
 # Header constants
 HEADER_SIGNATURE = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
 MINOR_VERSION = 0x003E
@@ -18,67 +20,8 @@ FATSECT = 0xFFFFFFFD  #: (-3) denotes a FAT sector in a FAT
 ENDOFCHAIN = 0xFFFFFFFE  #: (-2) end of a virtual stream chain
 FREESECT = 0xFFFFFFFF  #: (-1) unallocated sector
 
-# Directory entry constants
-MAXREGSID = 0xFFFFFFFA  #: (-6) maximum directory entry ID
-NOSTREAM = 0xFFFFFFFF  #: (-1) unallocated directory entry
-
-# Object type constants
-OBJTY_EMPTY = 0x00  #: empty directory entry
-OBJTY_STORAGE = 0x01  #: element is a storage object
-OBJTY_STREAM = 0x02  #: element is a stream object
-OBJTY_LOCKBYTES = 0x03  #: element is an ILockBytes object
-OBJTY_PROPERTY = 0x04  #: element is an IPropertyStorage object
-OBJTY_ROOT = 0x05  #: element is a root storage
-
 
 class CompoundFile:
-    class Directory:
-        def __init__(self) -> None:
-            # Directory data
-            self.name = "".encode("utf-16-le")
-            self.type = OBJTY_EMPTY
-            self.subdirs = []
-            self.sector = 0x00000000
-            self.size = 0
-
-        def __bytes__(self) -> bytes:
-            directory_data = struct.pack(
-                "<64sHBBIII16sIQQIQ",
-                self.name,
-                len(self.name) + 1,
-                self.type,
-                0x01,
-                0xFFFFFFFF,
-                0xFFFFFFFF,
-                0xFFFFFFFF,
-                bytes(16),
-                0x00000000,
-                0x0000000000000000,
-                0x0000000000000000,
-                self.sector,
-                self.size,
-            )
-
-            return directory_data
-
-        def find(self, path):
-            head, *tail = path.split("/", 1)
-
-            target_dir = None
-
-            for subdir in self.subdirs:
-                if subdir.name == head:
-                    target_dir = subdir
-                    break
-
-            # Return target directory
-            # if no target was found or no tail is left
-            if not target_dir or not tail:
-                return target_dir
-
-            # Recursively find target directory
-            return target_dir.find(tail[0])
-
     def __init__(self) -> None:
         # File metadata
         self.file_name = ""
@@ -111,9 +54,59 @@ class CompoundFile:
         self.mini_sectors = []
 
         # Directories
-        self.root_directory = CompoundFile.Directory()
-        self.root_directory.name = "Root Entry".encode("utf-16-le")
-        self.root_directory.type = OBJTY_ROOT
+        self.root_directory = directory.Directory()
+        self.num_dir = 1  # Starts from 1 due to root entry
+
+        # Insert root entry to root directory
+        self.root_directory.insert(
+            directory.EntryData(
+                "Root Entry",
+                stream_id=0,
+                obj_type=directory.OBJTY_ROOT,
+            ),
+        )
+
+    def search_directory(self, path):
+        """
+        Search path in directory
+
+        Returns entry with given path if found. Return `None` if there is no such path in directory.
+
+        """
+
+        current_entry = self.root_directory.root
+
+        for name in path.split("/"):
+            # Skip if name is blank (double slash or root directory)
+            if name == "":
+                continue
+
+            # Search name for current entry
+            current_entry = current_entry.data.child.search_name(name=name)
+
+            # Return `None` if current_entry is NIL
+            if current_entry.data is None:
+                return None
+
+        # Return search result
+        return current_entry
+
+    def insert_directory(self, path, data: directory.EntryData):
+        """
+        Insert new entry as child of other entry with given path.
+
+        """
+
+        if (entry := self.search_directory(path)) is None:
+            raise Exception(f"Given path not found: {path}")
+
+        # Update entry data
+        data.stream_id = self.num_dir
+        data.parent = entry
+
+        # Insert new entry as child of parent entry
+        entry.data.child.insert(data)
+        self.num_dir += 1
 
     def write_sector(self, data: bytes):
         """
@@ -293,27 +286,18 @@ class CompoundFile:
         for root, _, streams in os.walk(src):
             storage = os.path.relpath(root, src).lstrip(".")
 
-            # Add storage as directory entry
+            # Add storage as directory entry is storage is not a root
             if storage:
                 *path, storage_name = storage.split("/")
 
-                # Initialize directory entry for storage
-                storage_dir = CompoundFile.Directory()
-                storage_dir.name = storage_name.encode("utf-16-le")
-                storage_dir.type = OBJTY_STORAGE
-
-                # Add storage as subdir of parent storage
-                if path:
-                    parent_dir = cfb.root_directory.find("/".join(path))
-
-                else:
-                    parent_dir = cfb.root_directory
-
-                parent_dir.subdirs.append(storage_dir)
-
-            # Use root storage if storage name is empty
-            else:
-                storage_dir = cfb.root_directory
+                # Insert storage into directory
+                cfb.insert_directory(
+                    "/".join(path),
+                    directory.EntryData(
+                        name=storage_name,
+                        obj_type=directory.OBJTY_STORAGE,
+                    ),
+                )
 
             for stream in streams:
                 # Read data from file
@@ -328,22 +312,23 @@ class CompoundFile:
                 else:
                     stream_sector_index = cfb.write_mini_sector(stream_data)
 
-                # Initialize directory entry for stream
-                stream_dir = CompoundFile.Directory()
-                stream_dir.name = stream.encode("utf-16-le")
-                stream_dir.type = OBJTY_STREAM
-                stream_dir.size = stream_size
-                stream_dir.sector = stream_sector_index
-
-                # Add stream as subdir of storage
-                storage_dir.subdirs.append(stream_dir)
+                # Insert stream into directory
+                cfb.insert_directory(
+                    storage,
+                    directory.EntryData(
+                        name=stream,
+                        obj_type=directory.OBJTY_STREAM,
+                        sector=stream_sector_index,
+                        size=stream_size,
+                    ),
+                )
 
         # Write mini-sector into sector
         mini_sector_data = b"".join(cfb.mini_sectors)
         mini_sector_index = cfb.write_sector(mini_sector_data)
 
-        cfb.root_directory.size = len(mini_sector_data)
-        cfb.root_directory.sector = mini_sector_index
+        cfb.root_directory.root.data.size = len(mini_sector_data)
+        cfb.root_directory.root.data.sector = mini_sector_index
 
         # Get sector size
         sector_size = 1 << cfb.sector_shift
@@ -357,8 +342,15 @@ class CompoundFile:
         )
         cfb.first_mini_fat_sector = cfb.write_sector(mini_fat_data)
 
+        # Round up to nearest multiple of 4
+        directory_list = [b"\xff\xff\xff\xff"] * ((cfb.num_dir + 3) // 4) * 4
+
+        # Insert directory entry into directory list
+        for entry in cfb.root_directory.traverse():
+            directory_list[entry.stream_id()] = bytes(entry)
+
         # Write directory entry into sector
-        directory_data = bytes(cfb.root_directory)
+        directory_data = b"".join(directory_list)
         cfb.num_dir_sectors = math.ceil(len(directory_data) / sector_size)
         cfb.first_dir_sector = cfb.write_sector(directory_data)
 
