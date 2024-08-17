@@ -226,7 +226,12 @@ class CompoundFile:
             fp.write(header_data)
 
             # Write difat
-            fp.write(bytes(436))
+            for entry in self.difat:
+                fp.write(struct.pack("<I", entry))
+
+            # Patch rest of difat entry
+            for _ in range(109 - len(self.difat)):
+                fp.write(struct.pack("<I", 0xFFFFFFFF))
 
             # Write sectors
             fp.write(b"".join(self.sectors))
