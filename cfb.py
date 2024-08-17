@@ -358,9 +358,10 @@ class CompoundFile:
         cfb.write_fat(fat_data)
         cfb.num_fat_sectors = math.ceil(len(fat_data) / sector_size)
 
+        # Hotfixed instance variables
+        # TODO: You have to remove this line after problem is fully recognized.
+        cfb.first_difat_sector = 0xFFFFFFFE
+        cfb.num_dir_sectors = 0
+
         # Export results as file
         cfb.save(dest)
-
-
-if __name__ == "__main__":
-    CompoundFile.compress("tests/test")
