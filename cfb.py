@@ -1,5 +1,4 @@
 from olefile import OleFileIO
-
 import os, struct
 import math
 
@@ -9,7 +8,7 @@ import directory
 HEADER_SIGNATURE = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
 MINOR_VERSION = 0x003E
 MAJOR_VERSION = 0x0003
-BYTE_ORDER = 0xFFEE
+BYTE_ORDER = 0xFFFE
 MINI_SECTOR_SHIFT = 0x0006
 MINI_STREAM_CUTOFF_SIZE = 0x00001000
 
