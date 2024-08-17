@@ -199,11 +199,6 @@ class CompoundFile:
         Save compound file from CompoundFile instance.
 
         """
-        # Update header data
-        self.num_fat_sectors = 0
-        self.num_mini_fat_sectors = 0
-        self.num_difat_sectors = 0
-        self.num_dir_sectors = 0
 
         # Write header sector
         header_data = struct.pack(
