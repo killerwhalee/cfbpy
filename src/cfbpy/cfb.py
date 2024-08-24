@@ -2,7 +2,7 @@ from olefile import OleFileIO
 import os, struct
 import math
 
-import directory
+from . import directory
 
 # Header constants
 HEADER_SIGNATURE = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
