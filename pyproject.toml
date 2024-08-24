@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cfbpy"
+version = "0.0.1"
+authors = [
+  { name="killerwhalee", email="killerwhalee@kaist.ac.kr" },
+]
+description = "Python module for compressing/decompressing compound file binary format (CFB)"
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/killerwhalee/cfbpy"
+Issues = "https://github.com/killerwhalee/cfbpy/issues"

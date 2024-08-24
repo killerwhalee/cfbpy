@@ -7,5 +7,5 @@ __pycache__/
 .venv/
 .env
 
-# Private folder
-tests/
+# Distribution
+dist/
