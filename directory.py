@@ -63,6 +63,9 @@ class EntryData:
         self_name = self.name.decode("utf-16-le").upper()
         other_name = other.name.decode("utf-16-le").upper()
 
+        if len(self_name) != len(other_name):
+            return len(self_name) > len(other_name)
+
         return self_name > other_name
 
 
