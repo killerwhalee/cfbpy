@@ -1,37 +1,15 @@
-from olefile import OleFileIO, STGTY_STORAGE, STGTY_STREAM
-import array, os, shutil, struct, sys
+import array, os, sys
 
-from . import directory
-
-# Header constants
-HEADER_SIGNATURE = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
-MINOR_VERSION = 0x003E
-MAJOR_VERSION = 0x0003
-BYTE_ORDER = 0xFFFE
-SECTOR_SHIFT = 0x0009  # 512-byte sectors for major version 3
-MINI_SECTOR_SHIFT = 0x0006
-MINI_STREAM_CUTOFF_SIZE = 0x00001000
-
-HEADER_FORMAT = struct.Struct("<8s16sHHHHH6xIIIIIIIII109I")
-HEADER_SIZE = HEADER_FORMAT.size  # 512 bytes
-NUM_HEADER_DIFAT = 109
+from . import directory, reader
+from .constants import *
+from .reader import CompoundFileError
 
 SECTOR_SIZE = 1 << SECTOR_SHIFT
 MINI_SECTOR_SIZE = 1 << MINI_SECTOR_SHIFT
 ENTRIES_PER_SECTOR = SECTOR_SIZE // 4  # FAT/MINIFAT/DIFAT entries per sector
 
-# Sector constants
-MAXREGSECT = 0xFFFFFFFA  #: (-6) maximum SECT
-DIFSECT = 0xFFFFFFFC  #: (-4) denotes a DIFAT sector in a FAT
-FATSECT = 0xFFFFFFFD  #: (-3) denotes a FAT sector in a FAT
-ENDOFCHAIN = 0xFFFFFFFE  #: (-2) end of a virtual stream chain
-FREESECT = 0xFFFFFFFF  #: (-1) unallocated sector
-
 # Chunk size for copying large streams
 COPY_CHUNK_SIZE = 1 << 20
-
-# Array typecode of unsigned 32-bit integer, used for FAT and MINIFAT
-UINT32 = next(code for code in "IL" if array.array(code).itemsize == 4)
 
 
 def _pack_sectors(entries) -> bytes:
@@ -341,34 +319,28 @@ def decompress(src, dest=None):
     """
     Decompress compound file and create directory at destination.
 
+    Raises `CompoundFileError` if `src` is not a valid compound file.
+
     """
 
     # Set path same as `src` if dest is not set
     if not dest:
         dest, _ = os.path.splitext(src)
 
-    os.makedirs(dest, exist_ok=True)
+    # Open before creating `dest`, so an invalid file leaves nothing behind
+    with reader.CompoundFileReader(src) as cfb:
+        os.makedirs(dest, exist_ok=True)
 
-    with OleFileIO(src) as ole:
-        pending = [(ole.root, dest)]
+        # Storages are yielded before their children
+        for parts, entry in cfb.walk():
+            path = os.path.join(dest, *parts[:-1], _safe_name(parts[-1]))
 
-        # Walk storage tree directly instead of opening streams by path, as
-        # `OleFileIO.openstream()` scans every sibling to resolve each name
-        while pending:
-            storage, storage_path = pending.pop()
+            if entry.obj_type == directory.OBJTY_STORAGE:
+                os.makedirs(path, exist_ok=True)
 
-            for entry in storage.kids:
-                path = os.path.join(storage_path, _safe_name(entry.name))
-
-                if entry.entry_type == STGTY_STORAGE:
-                    os.makedirs(path, exist_ok=True)
-                    pending.append((entry, path))
-
-                elif entry.entry_type == STGTY_STREAM:
-                    # Same as `openstream()` once the entry is found
-                    with ole._open(entry.isectStart, entry.size) as stream:
-                        with open(path, "wb") as f:
-                            shutil.copyfileobj(stream, f)
+            else:
+                with open(path, "wb") as f:
+                    cfb.copy_stream(entry, f)
 
     # Return True if decompressed successfully
     return True

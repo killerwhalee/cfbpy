@@ -11,7 +11,7 @@ It provides an easy-to-use interface for handling compound files through the Com
 
 ## Installation
 
-You can install cfbpy via pip:
+cfbpy is written in pure Python and has no dependencies. You can install cfbpy via pip:
 
 ```bash
 pip install cfbpy
@@ -50,9 +50,9 @@ Compound file names are limited by the format, so `compress` raises `ValueError`
 - contains any of `/ \ : !`, or
 - differs from a sibling only in letter case.
 
-`decompress` raises `ValueError` for entry names that would escape the destination directory, such as `..`.
+`decompress` raises `CompoundFileError` (a subclass of `ValueError`) if the input is not a valid compound file, and `ValueError` for entry names that would escape the destination directory, such as `..`.
 
-Files are written as a major version 3 compound file (512-byte sectors).
+Files are written as a major version 3 compound file (512-byte sectors). Both major version 3 and 4 (4096-byte sectors) files can be decompressed.
 
 ## Development
 

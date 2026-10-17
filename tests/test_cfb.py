@@ -72,6 +72,11 @@ def compress_and_check(tmp_path, files, dirs=()):
         for path, data in files.items():
             assert ole.openstream(path).read() == data
 
+    # Round trip through cfbpy's own reader
+    out = tmp_path / "roundtrip"
+    CompoundFile.decompress(str(dest), str(out))
+    assert read_tree(out) == expected
+
     return dest
 
 

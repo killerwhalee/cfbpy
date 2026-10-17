@@ -11,9 +11,7 @@ authors = [
 description = "Python module for compressing/decompressing compound file binary format (CFB)"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-    "olefile>=0.46",
-]
+dependencies = []
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -24,7 +22,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest"]
+# olefile is used only to cross-check files in tests
+test = ["pytest", "olefile>=0.46"]
 
 [project.urls]
 Homepage = "https://github.com/killerwhalee/cfbpy"
