@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.11.0,<0.12"]
+build-backend = "uv_build"
 
 [project]
 name = "cfbpy"
@@ -10,6 +10,8 @@ authors = [
 ]
 description = "Python module for compressing/decompressing compound file binary format (CFB)"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = []
 classifiers = [
@@ -17,13 +19,12 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 # olefile is used only to cross-check files in tests
-test = ["pytest", "olefile>=0.46"]
+dev = ["pytest>=8", "olefile>=0.46"]
 
 [project.urls]
 Homepage = "https://github.com/killerwhalee/cfbpy"
@@ -31,3 +32,7 @@ Issues = "https://github.com/killerwhalee/cfbpy/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.build-backend]
+# Package lives at the repository root instead of src/
+module-root = ""

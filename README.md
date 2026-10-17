@@ -17,6 +17,12 @@ cfbpy is written in pure Python and has no dependencies. You can install cfbpy v
 pip install cfbpy
 ```
 
+Or add it to a [uv](https://docs.astral.sh/uv/) project:
+
+```bash
+uv add cfbpy
+```
+
 ## Usage
 
 Here’s how you can use `cfbpy` to compress and decompress files:
@@ -56,10 +62,13 @@ Files are written as a major version 3 compound file (512-byte sectors). Both ma
 
 ## Development
 
+The project is managed with [uv](https://docs.astral.sh/uv/).
+
 ```bash
-pip install -e ".[test]"
-pytest                       # run tests
-python benchmarks/bench.py   # measure compress/decompress time and memory
+uv sync                             # create .venv with the package and dev dependencies
+uv run pytest                       # run tests
+uv run python benchmarks/bench.py   # measure compress/decompress time and memory
+uv build                            # build sdist and wheel into dist/
 ```
 
 ## License
