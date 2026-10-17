@@ -217,3 +217,44 @@ def test_deterministic_output(tmp_path):
     CompoundFile.compress(str(src), str(tmp_path / "b.cfb"))
 
     assert (tmp_path / "a.cfb").read_bytes() == (tmp_path / "b.cfb").read_bytes()
+
+
+def test_decompress_roundtrip(tmp_path):
+    files = {
+        "a.txt": b"hello",
+        "sub/b.bin": os.urandom(5000),
+        "sub/deep/c": b"",
+        "big": os.urandom(100_000),
+    }
+    dirs = ["sub/empty"]
+    dest = compress_and_check(tmp_path, files, dirs)
+
+    out = tmp_path / "out"
+    assert CompoundFile.decompress(str(dest), str(out))
+
+    assert read_tree(out) == expected_entries(files, dirs)
+
+
+def test_decompress_default_destination(tmp_path):
+    dest = compress_and_check(tmp_path, {"f": b"1"})
+
+    CompoundFile.decompress(str(dest))
+
+    assert read_tree(tmp_path / "out") == {"f": b"1"}
+
+
+def test_decompress_rejects_path_traversal(tmp_path):
+    dest = compress_and_check(tmp_path, {"yy/escaped": b"evil"})
+
+    # Rename storage "yy" to ".." in place; the name length is unchanged
+    raw = bytearray(dest.read_bytes())
+    old = struct.pack("<64sH", "yy".encode("utf-16-le"), 6)
+    assert raw.count(old) == 1
+    offset = raw.index(old)
+    raw[offset : offset + 4] = "..".encode("utf-16-le")
+    dest.write_bytes(bytes(raw))
+
+    with pytest.raises(ValueError):
+        CompoundFile.decompress(str(dest), str(tmp_path / "out" / "inner"))
+
+    assert not (tmp_path / "out" / "escaped").exists()

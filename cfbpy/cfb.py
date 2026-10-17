@@ -1,5 +1,5 @@
-from olefile import OleFileIO
-import array, os, struct, sys
+from olefile import OleFileIO, STGTY_STORAGE, STGTY_STREAM
+import array, os, shutil, struct, sys
 
 from . import directory
 
@@ -318,6 +318,25 @@ def _compress(src, dest):
         )
 
 
+def _safe_name(name):
+    """
+    Return entry name as a file name, rejecting names that would escape the destination directory.
+
+    """
+
+    if (
+        name in ("", os.curdir, os.pardir)
+        or os.sep in name
+        or (os.altsep and os.altsep in name)
+        or "\0" in name
+        or os.path.isabs(name)
+        or os.path.splitdrive(name)[0]
+    ):
+        raise ValueError(f"Unsafe entry name in compound file: {name!r}")
+
+    return name
+
+
 def decompress(src, dest=None):
     """
     Decompress compound file and create directory at destination.
@@ -330,23 +349,26 @@ def decompress(src, dest=None):
 
     os.makedirs(dest, exist_ok=True)
 
-    # Open compound file
-    olefile = OleFileIO(src)
+    with OleFileIO(src) as ole:
+        pending = [(ole.root, dest)]
 
-    # Iterate every stream in compound file
-    for *storage_path, stream_path in olefile.listdir():
-        # Create storge as directory
-        full_path = dest + "/" + "/".join(storage_path)
-        os.makedirs(full_path, exist_ok=True)
+        # Walk storage tree directly instead of opening streams by path, as
+        # `OleFileIO.openstream()` scans every sibling to resolve each name
+        while pending:
+            storage, storage_path = pending.pop()
 
-        # Read stream and export as file
-        real_path = full_path + "/" + stream_path
+            for entry in storage.kids:
+                path = os.path.join(storage_path, _safe_name(entry.name))
 
-        with open(real_path, "wb") as f:
-            data_path = "/".join(storage_path + [stream_path])
-            data = olefile.openstream(data_path).read()
+                if entry.entry_type == STGTY_STORAGE:
+                    os.makedirs(path, exist_ok=True)
+                    pending.append((entry, path))
 
-            f.write(data)
+                elif entry.entry_type == STGTY_STREAM:
+                    # Same as `openstream()` once the entry is found
+                    with ole._open(entry.isectStart, entry.size) as stream:
+                        with open(path, "wb") as f:
+                            shutil.copyfileobj(stream, f)
 
     # Return True if decompressed successfully
     return True
