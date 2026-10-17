@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Self
 import struct
 
 # Directory entry constants
@@ -19,280 +18,177 @@ OBJTY_ROOT = 0x05  #: element is a root storage
 RED = 0x00
 BLACK = 0x01
 
+# Directory entry layout
+ENTRY_FORMAT = struct.Struct("<64sHBBIII16sIQQIQ")
+ENTRY_SIZE = ENTRY_FORMAT.size  # 128 bytes
+MAX_NAME_LENGTH = 31  # UTF-16 code units, excluding the terminating NUL
+ILLEGAL_NAME_CHARS = frozenset("/\\:!")
 
-class EntryData:
-    def __init__(
-        self,
-        name: str,
-        stream_id=NOSTREAM,
-        obj_type=OBJTY_EMPTY,
-        sector=0x00000000,
-        size=0,
-        parent: Entry = None,
-    ):
+EMPTY_ENTRY = ENTRY_FORMAT.pack(
+    b"", 0, OBJTY_EMPTY, RED, NOSTREAM, NOSTREAM, NOSTREAM, bytes(16), 0, 0, 0, 0, 0
+)
 
-        # Entry information
-        self.name = name[:31].encode("utf-16-le")
-        self.stream_id = stream_id
-        self.obj_type = obj_type
-        self.sector = sector
-        self.size = size
 
-        # Directory hierarchy
-        self.parent = parent  # Entry of parent directory
-        self.child = Directory()  # RBTree of child directory
+def sort_key(name: str):
+    """
+    Sort key for sibling entries as described on MS-CFB documentation.
 
-    def __eq__(self, other: Self) -> bool:
-        """
-        Regard two `EntryData` instance is the same if the name is identical.
+    Names are compared by length first, then by their uppercase UTF-16 code units. Uppercase conversion uses python's `upper()` per character, keeping characters whose uppercase form is longer than one character (such as "ß") as they are.
 
-        """
+    MS-CFB has some exception cases for several unicode characters, but those exceptions are negligible.
 
-        return self.name == other.name
+    """
 
-    def __gt__(self, other: Self) -> bool:
-        """
-        Define comparison operator as described on MS-CFB documentation.
+    upper = "".join(c.upper() if len(c.upper()) == 1 else c for c in name)
 
-        Currently, uppercase conversion is achieved by using `upper()` method provided by python. As `upper()` is implemented regarding unicode uppercase conversion rule, it works fine with most of the case.
-
-        However, as MS-CFB has some exception cases for several unicode characters. But this exceptions are negligible. Who will use "LATIN SMALL LETTER A WITH STROKE" for directory name?
-
-        """
-
-        self_name = self.name.decode("utf-16-le").upper()
-        other_name = other.name.decode("utf-16-le").upper()
-
-        if len(self_name) != len(other_name):
-            return len(self_name) > len(other_name)
-
-        return self_name > other_name
+    # Big-endian UTF-16 bytes compare in the same order as UTF-16 code units
+    return len(name.encode("utf-16-le")) // 2, upper.encode("utf-16-be")
 
 
 class Entry:
-    def __init__(
-        self,
-        data: EntryData = None,
-        color=RED,
-        left: Self = None,
-        right: Self = None,
-        parent: Self = None,
-    ):
-        # Entry data
-        self.data = data
+    """
+    Directory entry of a storage or stream.
 
-        # RBTree information
-        self.color = color
-        self.left = left
-        self.right = right
-        self.parent = parent
+    Children are kept in a dict keyed by `sort_key`, so lookups and duplicate checks are O(1). The red-black tree is only built when the directory is serialized.
+
+    """
+
+    __slots__ = (
+        "name",
+        "obj_type",
+        "key",
+        "children",
+        "sector",
+        "size",
+        "stream_id",
+        "color",
+        "left",
+        "right",
+        "child",
+    )
+
+    def __init__(self, name: str, obj_type=OBJTY_STREAM, sector=0, size=0):
+        encoded = name.encode("utf-16-le")
+
+        if not name or len(encoded) > MAX_NAME_LENGTH * 2:
+            raise ValueError(
+                f"Entry name must be 1 to {MAX_NAME_LENGTH} UTF-16 code units long: {name!r}"
+            )
+
+        if ILLEGAL_NAME_CHARS.intersection(name):
+            raise ValueError(f"Entry name must not contain any of '/\\:!': {name!r}")
+
+        # Entry information
+        self.name = encoded
+        self.obj_type = obj_type
+        self.key = sort_key(name)
+        self.children: dict[tuple, Entry] = {}
+        self.sector = sector
+        self.size = size
+
+        # Assigned on serialization
+        self.stream_id = NOSTREAM
+        self.color = BLACK
+        self.left = NOSTREAM
+        self.right = NOSTREAM
+        self.child = NOSTREAM
+
+    def add(self, entry: Entry) -> Entry:
+        """
+        Add `entry` as a child of this storage and return it.
+
+        Raises `ValueError` if a sibling with the same name exists, as names are compared case-insensitively.
+
+        """
+
+        if entry.key in self.children:
+            raise ValueError(
+                f"Duplicate entry name (names are case-insensitive): {entry.name.decode('utf-16-le')!r}"
+            )
+
+        self.children[entry.key] = entry
+        return entry
 
     def __bytes__(self) -> bytes:
         """
         Represents directory entry objects as 128-byte bytes string.
 
         """
-        directory_data = struct.pack(
-            "<64sHBBIII16sIQQIQ",
-            self.data.name,
-            len(self.data.name) + 2,
-            self.data.obj_type,
+
+        return ENTRY_FORMAT.pack(
+            self.name,
+            len(self.name) + 2,
+            self.obj_type,
             self.color,
-            self.left.stream_id(),
-            self.right.stream_id(),
-            self.data.child.root.stream_id(),
+            self.left,
+            self.right,
+            self.child,
             bytes(16),
             0x00000000,
             0x0000000000000000,
             0x0000000000000000,
-            self.data.sector,
-            self.data.size,
+            self.sector,
+            self.size,
         )
 
-        return directory_data
 
-    def stream_id(self):
-        """
-        Get `stream_id` from entry data
+def _build_tree(entries: list[Entry]) -> int:
+    """
+    Link sorted sibling `entries` into a balanced red-black tree.
 
-        This shortcut is provided since `stream_id` is often used and there are some cases where entry data is `None`.
+    Taking the middle entry as root at every level keeps sibling subtree sizes within one of each other, so every leaf lies on the last two levels. Coloring the deepest level red (unless the tree is perfect) and everything else black then satisfies the red-black invariants without any rotation.
 
-        """
+    Returns stream ID of the tree root.
 
-        if self.data is None:
+    """
+
+    count = len(entries)
+    deepest = count.bit_length() - 1
+    red_level = deepest if count & (count + 1) else -1
+
+    def link(low, high, level):
+        if low >= high:
             return NOSTREAM
 
-        return self.data.stream_id
+        mid = (low + high) // 2
+        entry = entries[mid]
+        entry.left = link(low, mid, level + 1)
+        entry.right = link(mid + 1, high, level + 1)
+        entry.color = RED if level == red_level else BLACK
+
+        return entry.stream_id
+
+    return link(0, count, 0)
 
 
-class Directory:
-    def __init__(self):
-        """
-        Initialize Directory
+def serialize(root: Entry, sector_size: int) -> bytes:
+    """
+    Assign stream IDs, build red-black trees and return directory sector data.
 
-        Create NIL entry for indicating there's no entry available.
-        Set root as NIL.
+    Stream IDs are assigned in breadth-first order, so siblings get consecutive IDs. Unused entries in the last sector are filled with empty entries.
 
-        """
+    """
 
-        self.NIL = Entry(color=BLACK)
-        self.root = self.NIL
+    entries = [root]
+    root.stream_id = 0
 
-    def insert(self, data: EntryData):
-        new_entry = Entry(data=data, left=self.NIL, right=self.NIL)
-        parent = None
-        current = self.root
+    # `entries` grows while iterating, which walks the hierarchy breadth-first
+    for entry in entries:
+        if not entry.children:
+            continue
 
-        while current != self.NIL:
-            parent = current
+        siblings = [entry.children[key] for key in sorted(entry.children)]
 
-            if new_entry.data < current.data:
-                current = current.left
+        for stream_id, sibling in enumerate(siblings, start=len(entries)):
+            sibling.stream_id = stream_id
 
-            else:
-                current = current.right
+        entries.extend(siblings)
+        entry.child = _build_tree(siblings)
 
-        new_entry.parent = parent
+    if len(entries) > MAXREGSID:
+        raise ValueError("Too many directory entries")
 
-        # Tree is empty
-        if parent is None:
-            self.root = new_entry
+    per_sector = sector_size // ENTRY_SIZE
+    padding = -len(entries) % per_sector
 
-        elif new_entry.data < parent.data:
-            parent.left = new_entry
-
-        else:
-            parent.right = new_entry
-
-        new_entry.left = self.NIL
-        new_entry.right = self.NIL
-        new_entry.color = RED
-
-        self.fix_insert(new_entry)
-
-    def fix_insert(self, entry):
-        while entry.parent and entry.parent.color == RED:
-            if entry.parent == entry.parent.parent.left:
-                uncle = entry.parent.parent.right
-
-                # Case 1: Uncle is red
-                if uncle.color == RED:
-                    entry.parent.color = BLACK
-                    uncle.color = BLACK
-                    entry.parent.parent.color = RED
-                    entry = entry.parent.parent
-
-                else:
-                    # Case 2: entry is right child
-                    if entry == entry.parent.right:
-                        entry = entry.parent
-                        self.left_rotate(entry)
-
-                    # Case 3: entry is left child
-                    entry.parent.color = BLACK
-                    entry.parent.parent.color = RED
-                    self.right_rotate(entry.parent.parent)
-
-            else:
-                uncle = entry.parent.parent.left
-
-                # Case 1: Uncle is red
-                if uncle.color == RED:
-                    entry.parent.color = BLACK
-                    uncle.color = BLACK
-                    entry.parent.parent.color = RED
-                    entry = entry.parent.parent
-
-                else:
-                    # Case 2: entry is left child
-                    if entry == entry.parent.left:
-                        entry = entry.parent
-                        self.right_rotate(entry)
-
-                    # Case 3: entry is right child
-                    entry.parent.color = BLACK
-                    entry.parent.parent.color = RED
-                    self.left_rotate(entry.parent.parent)
-
-        self.root.color = BLACK
-
-    def left_rotate(self, entry):
-        right_child = entry.right
-        entry.right = right_child.left
-
-        if right_child.left != self.NIL:
-            right_child.left.parent = entry
-
-        right_child.parent = entry.parent
-
-        # entry is root
-        if entry.parent is None:
-            self.root = right_child
-
-        elif entry == entry.parent.left:
-            entry.parent.left = right_child
-
-        else:
-            entry.parent.right = right_child
-
-        right_child.left = entry
-        entry.parent = right_child
-
-    def right_rotate(self, entry):
-        left_child = entry.left
-        entry.left = left_child.right
-
-        if left_child.right != self.NIL:
-            left_child.right.parent = entry
-
-        left_child.parent = entry.parent
-
-        # entry is root
-        if entry.parent is None:
-            self.root = left_child
-
-        elif entry == entry.parent.right:
-            entry.parent.right = left_child
-
-        else:
-            entry.parent.left = left_child
-
-        left_child.right = entry
-        entry.parent = left_child
-
-    def search_name(self, name):
-        """
-        Search entry by name of entry data.
-
-        """
-
-        # Create dummy entry data for search
-        name_entry_data = EntryData(name=name, stream_id=NOSTREAM)
-
-        return self._search_tree_helper(self.root, name_entry_data)
-
-    def _search_tree_helper(self, entry, data):
-        if entry == self.NIL or data == entry.data:
-            return entry
-
-        if data < entry.data:
-            return self._search_tree_helper(entry.left, data)
-
-        return self._search_tree_helper(entry.right, data)
-
-    def traverse(self, entry=None):
-        """
-        Traverse directory tree
-
-        """
-
-        if entry == None:
-            entry = self.root
-
-        if entry != self.NIL:
-            yield from self.traverse(entry.left)
-
-            yield entry
-            yield from entry.data.child.traverse()
-
-            yield from self.traverse(entry.right)
+    return b"".join(map(bytes, entries)) + EMPTY_ENTRY * padding
