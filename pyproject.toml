@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "cfbpy"
-version = "0.0.3"
+version = "1.0.0"
 authors = [
   { name="killerwhalee", email="killerwhalee@kaist.ac.kr" },
 ]
@@ -15,6 +15,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = []
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
