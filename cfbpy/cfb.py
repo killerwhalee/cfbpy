@@ -1,4 +1,4 @@
-import array, os, sys
+import array, os, secrets, shutil, sys
 
 from . import directory, reader
 from .constants import *
@@ -195,15 +195,13 @@ class _SectorWriter:
         )
 
 
-def _walk(src, dest):
+def _walk(src, skip):
     """
     Yield `(parent, name, path)` for every directory and file under `src`.
 
-    `parent` is the relative path of the parent directory (empty for `src` itself) and `path` is `None` for directories. Entries are sorted so output is deterministic. `dest` is skipped if it lies inside `src`.
+    `parent` is the relative path of the parent directory (empty for `src` itself) and `path` is `None` for directories. Entries are sorted so output is deterministic. Files whose absolute path is in `skip` (output files inside `src`) are left out.
 
     """
-
-    dest = os.path.abspath(dest)
 
     for dirpath, dirnames, filenames in os.walk(src):
         dirnames.sort()
@@ -218,7 +216,7 @@ def _walk(src, dest):
         for name in filenames:
             path = os.path.join(dirpath, name)
 
-            if os.path.abspath(path) != dest:
+            if os.path.abspath(path) not in skip:
                 yield parent, name, path
 
 
@@ -236,64 +234,84 @@ def compress(src, dest=None):
     if not dest:
         dest = f"{src}.cfb"
 
+    dest = os.path.abspath(dest)
+
+    # Write to a temporary file next to `dest` and replace `dest` only on success, so a
+    # failure never truncates or removes an existing file
+    while True:
+        temp = os.path.join(
+            os.path.dirname(dest),
+            f".{os.path.basename(dest)}.{secrets.token_hex(4)}.tmp",
+        )
+
+        try:
+            fp = open(temp, "xb")
+            break
+
+        except FileExistsError:
+            continue
+
     try:
-        _compress(src, dest)
+        with fp:
+            _compress(src, fp, skip={dest, temp})
+
+        # Keep permissions of a file being replaced
+        if os.path.exists(dest):
+            shutil.copymode(dest, temp)
+
+        os.replace(temp, dest)
 
     except BaseException:
-        # Do not leave a partially written file behind
-        if os.path.exists(dest):
-            os.remove(dest)
-
+        os.remove(temp)
         raise
 
 
-def _compress(src, dest):
+def _compress(src, fp, skip):
     root = directory.Entry("Root Entry", obj_type=directory.OBJTY_ROOT)
     storages = {"": root}
     mini_stream = _MiniStream()
 
-    with open(dest, "wb") as fp:
-        writer = _SectorWriter(fp)
+    writer = _SectorWriter(fp)
 
-        for parent, name, path in _walk(src, dest):
-            storage = storages[parent]
+    for parent, name, path in _walk(src, skip):
+        storage = storages[parent]
 
-            # Add storage as directory entry
-            if path is None:
-                storages[os.path.join(parent, name)] = storage.add(
-                    directory.Entry(name, obj_type=directory.OBJTY_STORAGE),
-                )
-                continue
+        # Add storage as directory entry
+        if path is None:
+            storages[os.path.join(parent, name)] = storage.add(
+                directory.Entry(name, obj_type=directory.OBJTY_STORAGE),
+            )
+            continue
 
-            entry = storage.add(directory.Entry(name, obj_type=directory.OBJTY_STREAM))
+        entry = storage.add(directory.Entry(name, obj_type=directory.OBJTY_STREAM))
 
-            # Write data into mini-sector if smaller than cutoff, otherwise into sector
-            with open(path, "rb") as f:
-                head = f.read(MINI_STREAM_CUTOFF_SIZE)
+        # Write data into mini-sector if smaller than cutoff, otherwise into sector
+        with open(path, "rb") as f:
+            head = f.read(MINI_STREAM_CUTOFF_SIZE)
 
-                if len(head) < MINI_STREAM_CUTOFF_SIZE:
-                    entry.sector, entry.size = mini_stream.write(head), len(head)
+            if len(head) < MINI_STREAM_CUTOFF_SIZE:
+                entry.sector, entry.size = mini_stream.write(head), len(head)
 
-                else:
-                    entry.sector, entry.size = writer.copy(head, f)
+            else:
+                entry.sector, entry.size = writer.copy(head, f)
 
-        # Write mini stream into sector; its location is stored in root entry
-        root.sector = writer.write(mini_stream.data)
-        root.size = len(mini_stream.data)
+    # Write mini stream into sector; its location is stored in root entry
+    root.sector = writer.write(mini_stream.data)
+    root.size = len(mini_stream.data)
 
-        # Write mini-fat into sector
-        mini_fat_data = _pack_sectors(mini_stream.fat) if mini_stream.fat else b""
-        first_mini_fat_sector = writer.write(mini_fat_data)
+    # Write mini-fat into sector
+    mini_fat_data = _pack_sectors(mini_stream.fat) if mini_stream.fat else b""
+    first_mini_fat_sector = writer.write(mini_fat_data)
 
-        # Write directory entry into sector
-        first_dir_sector = writer.write(directory.serialize(root, SECTOR_SIZE))
+    # Write directory entry into sector
+    first_dir_sector = writer.write(directory.serialize(root, SECTOR_SIZE))
 
-        # Write fat, difat and header
-        writer.close(
-            first_dir_sector=first_dir_sector,
-            first_mini_fat_sector=first_mini_fat_sector,
-            num_mini_fat_sectors=len(mini_fat_data) // SECTOR_SIZE,
-        )
+    # Write fat, difat and header
+    writer.close(
+        first_dir_sector=first_dir_sector,
+        first_mini_fat_sector=first_mini_fat_sector,
+        num_mini_fat_sectors=len(mini_fat_data) // SECTOR_SIZE,
+    )
 
 
 def _safe_name(name):

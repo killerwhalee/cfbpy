@@ -214,6 +214,31 @@ def test_failed_compress_removes_output(tmp_path):
     assert not (tmp_path / "out.cfb").exists()
 
 
+def test_failed_compress_keeps_existing_output(tmp_path):
+    src = tmp_path / "src"
+    make_tree(src, {"a": b"1", "n" * 32: b"2"})
+    dest = tmp_path / "out.cfb"
+    dest.write_bytes(b"previous contents")
+
+    with pytest.raises(ValueError):
+        CompoundFile.compress(str(src), str(dest))
+
+    assert dest.read_bytes() == b"previous contents"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["out.cfb", "src"]
+
+
+def test_compress_replaces_existing_output(tmp_path):
+    src = tmp_path / "src"
+    make_tree(src, {"f": b"new"})
+    dest = tmp_path / "out.cfb"
+    dest.write_bytes(b"previous contents")
+
+    CompoundFile.compress(str(src), str(dest))
+
+    assert cfbcheck.read(dest) == {("f",): b"new"}
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["out.cfb", "src"]
+
+
 def test_deterministic_output(tmp_path):
     src = tmp_path / "src"
     make_tree(src, {f"d{i % 3}/f{i}": os.urandom(i * 97) for i in range(50)})
