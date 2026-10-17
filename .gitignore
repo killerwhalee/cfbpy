@@ -10,5 +10,6 @@ __pycache__/
 # Distribution
 dist/
 
-# Tests
-tests/
+# Tests (local test data; test code is tracked)
+tests/*
+!tests/*.py

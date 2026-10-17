@@ -6,13 +6,21 @@ It provides an easy-to-use interface for handling compound files through the Com
 
 ## Features
 
-Compress a directory into a compound file format.
-Decompress a compound file back into a directory.
-Installation
-You can install cfbpy via pip:
+- Compress a directory into a compound file format.
+- Decompress a compound file back into a directory.
+
+## Installation
+
+cfbpy is written in pure Python and has no dependencies. You can install cfbpy via pip:
 
 ```bash
 pip install cfbpy
+```
+
+Or add it to a [uv](https://docs.astral.sh/uv/) project:
+
+```bash
+uv add cfbpy
 ```
 
 ## Usage
@@ -22,25 +30,46 @@ Here’s how you can use `cfbpy` to compress and decompress files:
 ### Compress a Directory
 
 ```python
-from cfbpy import CompoundFile
+from cfbpy import compress
 
-cf = CompoundFile()
-cf.compress('path/to/directory', 'path/to/output.cfb')
+compress('path/to/directory', 'path/to/output.cfb')
 ```
 
 ### Decompress a Compound File
 
 ```python
-from cfbpy import CompoundFile
+from cfbpy import decompress
 
-cf = CompoundFile()
-cf.decompress('path/to/input.cfb', 'path/to/extracted_directory')
+decompress('path/to/input.cfb', 'path/to/extracted_directory')
 ```
+
+The same functions are also available as `CompoundFile.compress` and `CompoundFile.decompress`.
 
 ## Methods
 
-- compress(src, dest): Compresses the contents of the `src` directory into a compound file at `dest`.
-- decompress(src, dest): Decompresses the compound file from `src` to the directory `dest`.
+- `compress(src, dest=None)`: Compresses the contents of the `src` directory into a compound file at `dest` (default: `<src>.cfb`).
+- `decompress(src, dest=None)`: Decompresses the compound file from `src` to the directory `dest` (default: `src` without its extension).
+
+Compound file names are limited by the format, so `compress` raises `ValueError` when a file or directory name
+
+- is longer than 31 UTF-16 code units,
+- contains any of `/ \ : !`, or
+- differs from a sibling only in letter case.
+
+`decompress` raises `CompoundFileError` (a subclass of `ValueError`) if the input is not a valid compound file, and `ValueError` for entry names that would escape the destination directory, such as `..`.
+
+Files are written as a major version 3 compound file (512-byte sectors). Both major version 3 and 4 (4096-byte sectors) files can be decompressed.
+
+## Development
+
+The project is managed with [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv sync                             # create .venv with the package and dev dependencies
+uv run pytest                       # run tests
+uv run python benchmarks/bench.py   # measure compress/decompress time and memory
+uv build                            # build sdist and wheel into dist/
+```
 
 ## License
 
